@@ -1,0 +1,201 @@
+from bs4 import BeautifulSoup
+import requests
+import pandas as pd
+from random import randint
+from time import sleep
+
+headers = {'User-Agent' : 
+        'USER AGENT', 
+        'Accept-Language' : 'en-US, en;q=0.5',
+        "Connection": "keep-alive"}
+
+product_info = {"page":[], "result num":[], "search terms":[], 
+                "title":[], "store":[],
+                "current price":[], "usual price":[], 'price per':[], 'unit':[], 
+                "rating":[], "reviews":[]}
+
+def get_search_terms():
+    search_terms = input('What Amazon products would you like to learn about? \n')
+    return search_terms
+
+def how_many_pages():
+    num_pages = int(input('How many pages of results would you like to scrape? \n'))
+    return num_pages
+
+def make_search_URL(search_terms):
+    stripped_terms = search_terms.strip()
+    processed_terms = stripped_terms.replace(" ", "+")
+    search_URL = 'https://www.amazon.com/s?k=' + processed_terms
+    return search_URL
+
+def get_search_pages(search_URL, num_pages):
+    search_pages = []
+    for n in range(1, (num_pages + 1)):
+        search_pages.append(search_URL + '&page=' + str(n))
+    return search_pages
+
+def make_soup(URL):
+    request = requests.get(URL, headers = headers)
+    soup = BeautifulSoup(request.content, "html.parser")
+    return soup
+
+def make_URL_list (search_page):
+    URL_list = []
+
+    soup = make_soup(search_page)
+    links = soup.find_all("a", attrs={'class':'a-link-normal s-no-outline'})
+    
+    for link in links:
+        href = link.get('href')
+        if href.startswith('http') == False:
+            URL = 'https://www.amazon.com' + str(link.get('href'))
+            URL_list.append(URL)
+    
+    return URL_list
+
+def scrape_info (soup, info_tag,info_id,info_class):
+    if info_id is None:
+        product_info = soup.find(info_tag, attrs={"class": info_class})
+    if info_class is None:
+        product_info = soup.find(info_tag, attrs={"id": info_id})
+    else:
+        product_info = soup.find(info_tag, attrs={"id": info_id, "class": info_class})
+    product_info = process_info(product_info)
+    return product_info
+
+def process_info (info):
+    if info is not None:
+        info = info.text
+        info = info.strip()
+    else:
+        info = ''
+    return info
+
+def remove_chars (text):
+    char_remov = ['out of 5 stars', 'ratings','(',')',',','$',' ']
+    for char in char_remov:
+        text = text.replace(char,'')
+    return text
+
+def split_doubled_text (text):
+    halfway = len(text)//2
+    text = text[0:halfway]
+    return text
+
+def convert_to_float (text):
+    if (text is not None and text != ''):
+        text = float(text)
+    return text
+
+def get_store(soup):
+    store = scrape_info(soup, 'a', 'bylineInfo', None)
+    remov_text = ['Visit the ', ' Store', 'Brand: ']
+    for text in remov_text:
+        store = store.replace(text, '')
+    return store
+
+def get_current_price (soup):
+    price_whole = scrape_info(soup,'span', None, 'a-price-whole')
+    price_cents = scrape_info(soup,'span', None, 'a-price-fraction')
+    current_price = str(price_whole) + str(price_cents)
+    if (current_price is None) or (current_price == ''):
+        current_price = scrape_info(soup,'span', None, 'a-price a-text-price a-size-medium apexPriceToPay')
+        current_price = split_doubled_text(current_price)
+    if (current_price is None) or (current_price == ''):
+        current_price = scrape_info(soup,'span', None, 'a-offscreen')
+    
+    current_price = remove_chars(current_price)
+    current_price = convert_to_float(current_price)
+    
+    return current_price
+
+def get_usual_price(soup):
+    usual_price = scrape_info(soup,'span', None, 'a-price a-text-price a-size-base')
+    usual_price = split_doubled_text(usual_price)
+    usual_price = remove_chars (usual_price)
+    usual_price = convert_to_float(usual_price)
+    return usual_price
+
+def get_price_per_unit(soup):
+    price_per_unit = scrape_info(soup,'span', None, 'a-size-small a-color-price')
+    price_per_unit = remove_chars(price_per_unit)
+
+    if ((price_per_unit is not None) and ('/' in price_per_unit)):
+        price_per_unit = price_per_unit.split('/')
+        price_per = price_per_unit[0]
+        price_per = split_doubled_text(price_per)
+        price_per = convert_to_float(price_per)
+        unit = price_per_unit[1]
+    else:
+        price_per = ''
+        unit = ''
+    return price_per, unit
+
+def get_rating(soup):
+    rating = scrape_info(soup,'span', None, 'a-icon-alt')
+    rating = remove_chars(rating)
+    try: 
+        rating = convert_to_float(rating)
+    except:
+        rating = scrape_info(soup,'span', None, 'a-size-medium a-color-base')
+        rating = remove_chars(rating)
+        try: 
+            rating = convert_to_float(rating)
+        except:
+            rating = ''
+    return rating
+
+def add_product (soup):
+    title = scrape_info(soup, 'span','productTitle','a-size-large product-title-word-break')
+    product_info['title'].append(title)
+
+    store = get_store(soup)
+    product_info['store'].append(store)
+
+    current_price = get_current_price(soup)
+    product_info['current price'].append(current_price)
+
+    usual_price = get_usual_price(soup)
+    product_info['usual price'].append(usual_price)
+
+    price_per, unit = get_price_per_unit(soup)
+    product_info['price per'].append(price_per)
+    product_info['unit'].append(unit)
+
+    rating = get_rating(soup)
+    product_info['rating'].append(rating)
+
+    reviews = scrape_info(soup, 'span', 'acrCustomerReviewText', 'a-size-base')
+    reviews = remove_chars(reviews)
+    try: reviews = int(reviews)
+    except: reviews = convert_to_float(reviews)
+    product_info['reviews'].append(reviews)
+
+def main():
+    search_terms = get_search_terms()
+    num_pages = how_many_pages()
+    search_URL = make_search_URL(search_terms)
+    search_pages = get_search_pages(search_URL, num_pages)
+    
+    for page in search_pages:
+        URL_list = make_URL_list(page)
+        page_num = page[-1]
+        result_num = 0
+        
+        for URL in URL_list:
+            product_info['search terms'].append(search_terms)
+            result_num += 1
+            product_info['page'].append(page_num)
+            product_info['result num'].append(result_num)
+
+            soup = make_soup(URL)
+            add_product(soup)
+
+            sleep(randint(1,6))
+    
+    amazon_df = pd.DataFrame.from_dict(product_info)
+    print(amazon_df)
+    amazon_df.to_csv('FILENAME.csv')
+
+if __name__ == "__main__":
+    main()
